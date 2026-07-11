@@ -111,7 +111,7 @@ class ChatView extends ItemView {
         else if (ev.error !== 'no-speech' && ev.error !== 'aborted') new Notice('Ошибка распознавания: ' + ev.error);
       };
       rec.onend = () => {
-        // движок сам остановился (тишина/таймаут) — продолжаем слушать, пока пользователь не нажмёт стоп
+        // движок сам остановился (пауза/таймаут) — продолжаем слушать, пока не нажмут стоп
         if (!this.voiceStopped) { try { rec.start(); return; } catch (e) {} }
         this.recognition = null;
         if (this.micBtn) { this.micBtn.removeClass('ai-chat-mic-rec'); setIcon(this.micBtn, 'mic'); }
@@ -222,6 +222,7 @@ class ChatView extends ItemView {
   }
 
   async send() {
+    if (this.recognition) { this.voiceStopped = true; try { this.recognition.stop(); } catch (e) {} }
     const text = this.inputEl.value.trim();
     const imgs = (this.pendingImages && this.pendingImages.length) ? this.pendingImages.slice() : null;
     if (!text && !imgs) return;
@@ -247,14 +248,14 @@ class ChatView extends ItemView {
     if (wantsRename) { await this.previewRename(); return; }
     if (wantsNew) { await this.recipeFromText(text); return; }
 
-    // Авто-учёт текущего рецепта: если пришли С РЕЦЕПТА (не из книги) ИЛИ
-    // в запросе есть отсылка к текущей заметке — подкладываем её содержимое.
-    const refsNote = /(здесь|сюда|тут|эт(от|у|ой|о|а)|в этом|в этой|в рецепт|в заметк|добав|исправ|измен|поменя|замен|удали|убер|перепиш|оформ|посчита|переведи|удвой|порци)/i.test(text);
+    // Текущий рецепт уходит ИИ ТОЛЬКО при явной ссылке на него
+    // («исправь этот рецепт», «посмотри этот рецепт», «здесь» и т.п.).
+    const refsNote = /(эт(от|у|ой|ом) (рецепт|заметк)|в этом рецепт|в этой заметк|исправь этот|посмотри этот|правь этот|глянь этот|\bздесь\b|\bсюда\b|\bтут\b)/i.test(text);
     const rf = this.plugin.settings.recipesFolder ? this.plugin.settings.recipesFolder.replace(/\/+$/, '') : '';
     const lf = this.plugin.lastFile;
     const recipeOpen = lf && (lf.parent ? lf.parent.path : '/') === rf;
     let noteText = '';
-    if (recipeOpen && (!this.plugin.onGallery || refsNote)) {
+    if (recipeOpen && refsNote) {
       noteText = await this.getActiveNoteText();
     }
 
@@ -481,11 +482,19 @@ class GalleryView extends ItemView {
     return palette[h % palette.length];
   }
 
-  createRecipe() { this.createBlank(); }
+  createRecipe() {
+    new NewRecipeModal(this.app, this.plugin, (opts) => this.createBlank(opts)).open();
+  }
 
-  async createBlank() {
-    let content = await this.plugin.loadTemplate();
-    if (!content) content = '---\nкатегория: \nтеги: \nвремя_мин: \nпорции: \nоценка: \n---\n\n# Новый рецепт\n\n**Ингредиенты**\n\n- [ ] \n\n**Приготовление**\n\n1. \n\n**Калории**\n\n';
+  async createBlank(opts) {
+    opts = opts || {};
+    const title = (opts.title || 'Новый рецепт').trim() || 'Новый рецепт';
+    const cat = opts.cat || '';
+    const tags = opts.tags || [];
+    let fm = '---\nкатегория: ' + cat + '\n';
+    if (tags.length) { fm += 'теги:\n' + tags.map((t) => '  - ' + t).join('\n') + '\n'; } else { fm += 'теги: \n'; }
+    fm += 'время_мин: \nпорции: \nоценка: \n---';
+    const content = fm + '\n\n# ' + title + '\n\n**Ингредиенты**\n\n- [ ] \n\n**Приготовление**\n\n1. \n\n**Калории**\n\n';
     const file = await this.plugin.createRecipeFile(content);
     if (file) this.leaf.openFile(file);
   }
@@ -667,6 +676,40 @@ class PropsModal extends Modal {
   onClose() { this.contentEl.empty(); }
 }
 
+/* ─────────────── Новый рецепт: название, категория, теги ─────────────── */
+class NewRecipeModal extends Modal {
+  constructor(app, plugin, onCreate) { super(app); this.plugin = plugin; this.onCreate = onCreate; this.rTitle = ''; this.cat = ''; this.tags = []; }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h3', { text: 'Новый рецепт' });
+
+    contentEl.createEl('div', { cls: 'pm-label', text: 'Название' });
+    const titleI = contentEl.createEl('input', { type: 'text', attr: { placeholder: 'Например, Борщ', style: 'width:100%' } });
+    titleI.oninput = () => { this.rTitle = titleI.value; };
+
+    contentEl.createEl('div', { cls: 'pm-label', text: 'Категория' });
+    const sel = contentEl.createEl('select', { cls: 'pm-select' });
+    sel.createEl('option', { text: '— не выбрано —', value: '' });
+    (this.plugin.settings.categoriesList || '').split(/\n+/).map((s) => s.trim()).filter(Boolean)
+      .forEach((c) => sel.createEl('option', { text: c, value: c }));
+    sel.onchange = () => { this.cat = sel.value; };
+
+    contentEl.createEl('div', { cls: 'pm-label', text: 'Теги' });
+    const tagBox = contentEl.createDiv('pm-tags');
+    (this.plugin.settings.tagsList || '').split(/\n+/).map((s) => s.trim()).filter(Boolean)
+      .forEach((t) => {
+        const lbl = tagBox.createEl('label', { cls: 'pm-chk' });
+        const cb = lbl.createEl('input', { type: 'checkbox' });
+        lbl.appendText(' ' + t);
+        cb.onchange = () => { if (cb.checked) { this.tags.push(t); } else { this.tags = this.tags.filter((x) => x !== t); } };
+      });
+
+    const btn = contentEl.createEl('button', { cls: 'mod-cta pm-full', text: 'Создать' });
+    btn.onclick = () => { this.close(); this.onCreate({ title: this.rTitle, cat: this.cat, tags: this.tags }); };
+  }
+  onClose() { this.contentEl.empty(); }
+}
+
 /* ─────────────── Плагин ─────────────── */
 module.exports = class AINoteEditor extends Plugin {
   async onload() {
@@ -693,6 +736,8 @@ module.exports = class AINoteEditor extends Plugin {
       remember(this.app.workspace.activeLeaf);
       const f = this.app.workspace.getActiveFile();
       if (f) this.lastFile = f;
+      // Любая новая ПУСТАЯ заметка в папке рецептов становится рецептом-заготовкой
+      this.registerEvent(this.app.vault.on('create', (file) => this.onRecipeFileCreated(file)));
     });
 
     this.registerView(VIEW_TYPE, (leaf) => new ChatView(leaf, this));
@@ -763,11 +808,13 @@ module.exports = class AINoteEditor extends Plugin {
 
   // Открыть рецепт в «книжной» вкладке — чтобы «Назад» возвращал к книге
   openInBook(file) {
-    if (this.isLeafAlive(this.bookLeaf)) {
-      this.bookLeaf.openFile(file);
-      this.app.workspace.revealLeaf(this.bookLeaf);
-    } else {
-      this.app.workspace.getLeaf(false).openFile(file);
+    const leaf = this.isLeafAlive(this.bookLeaf) ? this.bookLeaf : this.app.workspace.getLeaf(false);
+    leaf.openFile(file);
+    this.app.workspace.revealLeaf(leaf);
+    // на телефоне свернём боковую панель с чатом, чтобы показать саму заметку
+    if (this.app.isMobile) {
+      const rs = this.app.workspace.rightSplit;
+      if (rs && rs.collapse) rs.collapse();
     }
   }
 
@@ -910,6 +957,41 @@ module.exports = class AINoteEditor extends Plugin {
   }
 
   // Создать новую заметку-рецепт (имя = заголовок # H1)
+  // Новая пустая заметка: в папке рецептов ИЛИ созданная при открытой книге → делаем рецептом
+  async onRecipeFileCreated(file) {
+    try {
+      if (!file || !file.path || !file.path.endsWith('.md')) return;
+      if (file.path === this.settings.templatePath || file.path === this.settings.examplePath) return;
+      const folder = this.settings.recipesFolder ? this.settings.recipesFolder.replace(/\/+$/, '') : '';
+      const inRecipes = (file.parent ? file.parent.path : '/') === folder;
+
+      // «создана из книги» определяем синхронно, ДО задержки (потом активная вкладка сменится на заметку)
+      const av = this.app.workspace.activeLeaf && this.app.workspace.activeLeaf.view;
+      const activeType = av && av.getViewType && av.getViewType();
+      const fromBook = this.onGallery === true || activeType === VIEW_TYPE_GALLERY;
+
+      if (!inRecipes && !fromBook) return; // не рецепт и не из книги — не трогаем
+
+      await new Promise((r) => setTimeout(r, 60));
+      const content = await this.app.vault.read(file);
+      if (content && content.trim().length > 0) return; // не пустая — не трогаем
+
+      // если создана из книги, но не в папке рецептов — переносим в неё
+      if (!inRecipes && fromBook && folder) {
+        if (!this.app.vault.getAbstractFileByPath(folder)) { try { await this.app.vault.createFolder(folder); } catch (e) {} }
+        let newPath = folder + '/' + file.name;
+        let n = 2;
+        while (this.app.vault.getAbstractFileByPath(newPath)) { newPath = folder + '/' + file.basename + ' ' + n + '.md'; n++; }
+        try { await this.app.fileManager.renameFile(file, newPath); } catch (e) {}
+      }
+
+      const title = file.basename || 'Новый рецепт';
+      const tpl = '---\nкатегория: \nтеги: \nвремя_мин: \nпорции: \nоценка: \n---\n\n# ' + title +
+        '\n\n**Ингредиенты**\n\n- [ ] \n\n**Приготовление**\n\n1. \n\n**Калории**\n\n';
+      await this.app.vault.modify(file, tpl);
+    } catch (e) {}
+  }
+
   async createRecipeFile(text) {
     const m = text.match(/^#\s+(.+)$/m);
     let title = (m ? m[1] : 'Новый рецепт').replace(/[\\/:*?"<>|#^\[\]]+/g, ' ').replace(/\s+/g, ' ').trim() || 'Новый рецепт';
