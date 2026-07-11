@@ -10,11 +10,11 @@ const VIEW_TYPE_GALLERY = 'recipe-gallery-view';
 const DEFAULT_SETTINGS = {
   baseUrl: 'https://api.groq.com/openai/v1',
   apiKey: '',
-  models: 'llama-3.3-70b-versatile\nopenai/gpt-oss-120b\nopenai/gpt-oss-20b',
-  templatePath: 'Рецепты/Новый рецепт (шаблон).md',
-  examplePath: 'Рецепты/Блинчики.md',
+  models: 'openai/gpt-oss-120b\nllama-3.3-70b-versatile\nopenai/gpt-oss-20b',
+  templatePath: '',
+  examplePath: '',
   recipesFolder: 'Рецепты',
-  visionModel: 'meta-llama/llama-4-scout-17b-16e-instruct',
+  visionModel: 'meta-llama/llama-4-maverick-17b-128e-instruct',
   openBookOnStart: true,
   categoriesList: 'Завтраки\nОсновные блюда\nСупы\nСалаты\nВыпечка\nДесерты\nНапитки\nЗакуски',
   tagsList: 'Быстро\nНа каждый день\nПраздничное\nПостное\nВегетарианское',
@@ -23,6 +23,32 @@ const DEFAULT_SETTINGS = {
     'Отвечай по-русски. Сохраняй Markdown-форматирование. ' +
     'Когда просят изменить заметку — верни её полный обновлённый текст. Ничего не выдумывай.'
 };
+
+// Встроенный образец формата — используется, если пользователь не задал свой файл-образец.
+const DEFAULT_EXAMPLE =
+  '---\n' +
+  'категория: Завтраки\n' +
+  'время_мин: 20\n' +
+  'порции: 2\n' +
+  'оценка: 5\n' +
+  '---\n\n' +
+  '# Сырники\n\n' +
+  '**Ингредиенты**\n\n' +
+  '- [ ] Творог — 400 г\n' +
+  '- [ ] Яйцо — 1 шт.\n' +
+  '- [ ] Сахар — 2 ст. л.\n' +
+  '- [ ] Мука — 3 ст. л.\n' +
+  '- [ ] Соль — щепотка\n\n' +
+  '**Приготовление**\n\n' +
+  '1. Творог размять с яйцом, сахаром и солью.\n' +
+  '2. Добавить муку, замесить тесто.\n' +
+  '3. Сформировать сырники и обжарить на среднем огне до румяности.\n\n' +
+  '**Калории**\n\n' +
+  '- Творог — 720 ккал\n' +
+  '- Яйцо — 70 ккал\n' +
+  '- Сахар — 100 ккал\n' +
+  '- Мука — 300 ккал\n\n' +
+  'Всего: ~1190 ккал';
 
 /* ─────────────── Чат-панель ─────────────── */
 class ChatView extends ItemView {
@@ -307,6 +333,11 @@ class ChatView extends ItemView {
     this.messagesEl.scrollTop = this.messagesEl.scrollHeight;
   }
 
+  // убираем выдуманные ИИ вставки картинок ![[...]] — у нового рецепта фото ещё нет
+  cleanRecipeText(text) {
+    return text.split('\n').filter((l) => !/!\[\[[^\]]*\]\]/.test(l)).join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  }
+
   // Пузырь с готовым рецептом: создать новую заметку / заменить текущую / копировать
   addRecipeBubble(text) {
     const wrap = this.messagesEl.createDiv('ai-msg ai-msg-assistant');
@@ -332,7 +363,7 @@ class ChatView extends ItemView {
       ]);
       const clean = reply.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '').trim();
       thinking.remove();
-      this.addRecipeBubble(clean);
+      this.addRecipeBubble(this.cleanRecipeText(clean));
     } catch (e) {
       thinking.remove();
       this.addBubble('assistant', 'Ошибка: ' + (e && e.message ? e.message : String(e)));
@@ -355,7 +386,7 @@ class ChatView extends ItemView {
       );
       const clean = reply.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '').trim();
       thinking.remove();
-      this.addRecipeBubble(clean);
+      this.addRecipeBubble(this.cleanRecipeText(clean));
     } catch (e) {
       thinking.remove();
       this.addBubble('assistant', 'Ошибка распознавания: ' + (e && e.message ? e.message : String(e)) +
@@ -405,7 +436,7 @@ class ChatView extends ItemView {
       ]);
       const clean = reply.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '').trim();
       thinking.remove();
-      this.addRecipeBubble(clean);
+      this.addRecipeBubble(this.cleanRecipeText(clean));
     } catch (e) {
       thinking.remove();
       this.addBubble('assistant', 'Не удалось загрузить страницу: ' + (e && e.message ? e.message : String(e)) +
@@ -490,30 +521,34 @@ class GalleryView extends ItemView {
     opts = opts || {};
     const title = (opts.title || 'Новый рецепт').trim() || 'Новый рецепт';
     const cat = opts.cat || '';
-    const tags = opts.tags || [];
-    let fm = '---\nкатегория: ' + cat + '\n';
-    if (tags.length) { fm += 'теги:\n' + tags.map((t) => '  - ' + t).join('\n') + '\n'; } else { fm += 'теги: \n'; }
-    fm += 'время_мин: \nпорции: \nоценка: \n---';
+    const fm = '---\nкатегория: ' + cat + '\nвремя_мин: \nпорции: \nоценка: \n---';
     const content = fm + '\n\n# ' + title + '\n\n**Ингредиенты**\n\n- [ ] \n\n**Приготовление**\n\n1. \n\n**Калории**\n\n';
     const file = await this.plugin.createRecipeFile(content);
     if (file) this.leaf.openFile(file);
   }
 
-  render() {
+  async render() {
     const root = this.containerEl.children[1];
     root.empty();
     root.addClass('recipe-gallery');
 
     const folder = this.plugin.settings.recipesFolder ? this.plugin.settings.recipesFolder.replace(/\/+$/, '') : '';
     const skip = [this.plugin.settings.templatePath, this.plugin.settings.examplePath];
-    const info = this.app.vault.getMarkdownFiles()
+    const files = this.app.vault.getMarkdownFiles()
       .filter((f) => (f.parent ? f.parent.path : '/') === folder && skip.indexOf(f.path) === -1)
-      .sort((a, b) => a.basename.localeCompare(b.basename, 'ru'))
-      .map((f) => {
-        const fm = (this.app.metadataCache.getFileCache(f) || {}).frontmatter || {};
-        let tags = fm['теги']; if (typeof tags === 'string') tags = [tags];
-        return { file: f, cat: fm['категория'] ? String(fm['категория']) : null, tags: (tags || []).map(String), rating: parseInt(fm['оценка']) || null, cooked: fm['приготовлено'] === true };
-      });
+      .sort((a, b) => a.basename.localeCompare(b.basename, 'ru'));
+    const info = [];
+    for (const f of files) {
+      let content = '';
+      try { content = await this.app.vault.cachedRead(f); } catch (e) {}
+      // пропускаем неоткрытые заготовки: нет ни одного заполненного ингредиента и шага
+      const hasIngredient = /-\s*\[[ xX]\]\s*\S/.test(content);
+      const hasStep = /(^|\n)\s*\d+\.\s+\S/.test(content);
+      if (!hasIngredient && !hasStep) continue;
+      const fm = (this.app.metadataCache.getFileCache(f) || {}).frontmatter || {};
+      let tags = fm['теги']; if (typeof tags === 'string') tags = [tags];
+      info.push({ file: f, cat: fm['категория'] ? String(fm['категория']) : null, tags: (tags || []).map(String), rating: parseInt(fm['оценка']) || null, cooked: fm['приготовлено'] === true });
+    }
 
     const header = root.createDiv('rg-header');
     header.createEl('div', { cls: 'rg-title', text: '📖 Книга рецептов' });
@@ -525,12 +560,9 @@ class GalleryView extends ItemView {
     actions.createEl('button', { cls: 'rg-chat', text: '🍳 Поварёнок' }).onclick = () => this.plugin.activateView();
 
     // фильтры по свойствам
-    const predefCats = (this.plugin.settings.categoriesList || '').split(/\n+/).map((s) => s.trim()).filter(Boolean);
-    const predefTags = (this.plugin.settings.tagsList || '').split(/\n+/).map((s) => s.trim()).filter(Boolean);
-    const cats = Array.from(new Set(predefCats.concat(info.map((i) => i.cat).filter(Boolean))));
-    const tags = Array.from(new Set(predefTags.concat([].concat.apply([], info.map((i) => i.tags)))));
+    const cats = this.plugin.allCategories();
     const rates = [5, 4, 3, 2, 1];
-    if (cats.length || tags.length || rates.length) {
+    if (cats.length || rates.length) {
       const fbar = root.createDiv('rg-filters');
       const group = (label, items) => {
         if (!items.length) return;
@@ -557,7 +589,10 @@ class GalleryView extends ItemView {
     if (this.filterCooked !== null) shown = shown.filter((i) => i.cooked === this.filterCooked);
 
     const grid = root.createDiv('rg-grid');
-    if (shown.length === 0) { grid.createEl('div', { cls: 'rg-empty', text: 'Ничего не найдено.' }); return; }
+    if (shown.length === 0) {
+      grid.createEl('div', { cls: 'rg-empty', text: info.length === 0 ? 'Рецептов пока нет — нажми «＋ Создать рецепт» или спроси Поварёнка.' : 'Ничего не найдено.' });
+      return;
+    }
 
     for (const it of shown) {
       const file = it.file;
@@ -579,7 +614,6 @@ class GalleryView extends ItemView {
 
       const pills = body.createDiv('rg-pills');
       if (it.cat) { const s = pills.createEl('span', { cls: 'rg-pill', text: it.cat }); s.style.background = this.colorFor(it.cat); }
-      it.tags.forEach((t) => { const s = pills.createEl('span', { cls: 'rg-pill', text: t }); s.style.background = this.colorFor(t); });
 
       const meta = body.createDiv('rg-meta');
       if (fm['время_мин']) meta.createEl('span', { cls: 'rg-time', text: '⏱ ' + fm['время_мин'] + ' мин' });
@@ -690,22 +724,11 @@ class NewRecipeModal extends Modal {
     contentEl.createEl('div', { cls: 'pm-label', text: 'Категория' });
     const sel = contentEl.createEl('select', { cls: 'pm-select' });
     sel.createEl('option', { text: '— не выбрано —', value: '' });
-    (this.plugin.settings.categoriesList || '').split(/\n+/).map((s) => s.trim()).filter(Boolean)
-      .forEach((c) => sel.createEl('option', { text: c, value: c }));
+    this.plugin.allCategories().forEach((c) => sel.createEl('option', { text: c, value: c }));
     sel.onchange = () => { this.cat = sel.value; };
 
-    contentEl.createEl('div', { cls: 'pm-label', text: 'Теги' });
-    const tagBox = contentEl.createDiv('pm-tags');
-    (this.plugin.settings.tagsList || '').split(/\n+/).map((s) => s.trim()).filter(Boolean)
-      .forEach((t) => {
-        const lbl = tagBox.createEl('label', { cls: 'pm-chk' });
-        const cb = lbl.createEl('input', { type: 'checkbox' });
-        lbl.appendText(' ' + t);
-        cb.onchange = () => { if (cb.checked) { this.tags.push(t); } else { this.tags = this.tags.filter((x) => x !== t); } };
-      });
-
     const btn = contentEl.createEl('button', { cls: 'mod-cta pm-full', text: 'Создать' });
-    btn.onclick = () => { this.close(); this.onCreate({ title: this.rTitle, cat: this.cat, tags: this.tags }); };
+    btn.onclick = () => { this.close(); this.onCreate({ title: this.rTitle, cat: this.cat }); };
   }
   onClose() { this.contentEl.empty(); }
 }
@@ -732,6 +755,8 @@ module.exports = class AINoteEditor extends Plugin {
     };
     this.registerEvent(this.app.workspace.on('active-leaf-change', remember));
     this.registerEvent(this.app.workspace.on('file-open', (file) => { if (file) this.lastFile = file; }));
+    // Одна вкладка для книги: рецепт, открытый в чужом листе, сводим в книжную вкладку
+    this.registerEvent(this.app.workspace.on('active-leaf-change', (leaf) => this.consolidateBookTab(leaf)));
     this.app.workspace.onLayoutReady(() => {
       remember(this.app.workspace.activeLeaf);
       const f = this.app.workspace.getActiveFile();
@@ -807,6 +832,24 @@ module.exports = class AINoteEditor extends Plugin {
   }
 
   // Открыть рецепт в «книжной» вкладке — чтобы «Назад» возвращал к книге
+  // Если рецепт открыт не в книжной вкладке — переносим его туда и закрываем лишний лист
+  consolidateBookTab(leaf) {
+    try {
+      if (!leaf) return;
+      const v = leaf.view;
+      if (!v || !v.getViewType || v.getViewType() !== 'markdown' || !v.file) return;
+      const folder = this.settings.recipesFolder ? this.settings.recipesFolder.replace(/\/+$/, '') : '';
+      if ((v.file.parent ? v.file.parent.path : '/') !== folder) return;
+      if (!this.isLeafAlive(this.bookLeaf)) { this.bookLeaf = leaf; return; }
+      if (leaf === this.bookLeaf) return;
+      const other = leaf;
+      const file = v.file;
+      this.bookLeaf.openFile(file);
+      this.app.workspace.revealLeaf(this.bookLeaf);
+      setTimeout(() => { try { if (this.isLeafAlive(other) && other !== this.bookLeaf) other.detach(); } catch (e) {} }, 0);
+    } catch (e) {}
+  }
+
   openInBook(file) {
     const leaf = this.isLeafAlive(this.bookLeaf) ? this.bookLeaf : this.app.workspace.getLeaf(false);
     leaf.openFile(file);
@@ -851,12 +894,15 @@ module.exports = class AINoteEditor extends Plugin {
     const example = await this.loadExample();
     const notice = new Notice('ИИ приводит рецепт к образцу…', 0);
     try {
-      let prompt = 'Приведи рецепт СТРОГО к формату образца: тот же блок метаданных между ---, ' +
-        'заголовок # Название, раздел «Ингредиенты» — список с чекбоксами (КАЖДАЯ строка начинается ровно с "- [ ] "), ' +
-        'раздел «Приготовление» — нумерованный список, в том же порядке. ' +
-        'Исправь орфографические ошибки. НЕ меняй сами ингредиенты, их количества и шаги — только оформление, порядок полей и ошибки. ' +
-        'ОБЯЗАТЕЛЬНО сохрани существующие строки с картинками ![[...]] на своих местах без изменений. Новых картинок не выдумывай.';
-      if (example) prompt += '\n\nОБРАЗЕЦ ФОРМАТА (бери из него ТОЛЬКО оформление, не содержимое):\n\n' + example;
+      let prompt = 'Аккуратно оформи этот рецепт и исправь орфографию, СОХРАНИВ его структуру и весь смысл. Правила:\n' +
+        '- Начни с блока метаданных между --- и заголовка # Название. Разделы: «Ингредиенты», «Приготовление», «Калории».\n' +
+        '- Ингредиенты — чекбоксами (каждая строка с "- [ ] "). Шаги — нумерованным списком.\n' +
+        '- ГЛАВНОЕ ПРАВИЛО: если внутри «Ингредиентов» есть подзаголовки (например "### Тесто", "### Крем", "### Глазурь", "### Начинка 1") — сохрани КАЖДЫЙ из них ДОСЛОВНО, со своим списком под ним. НЕ удаляй подзаголовки, НЕ сливай их списки в один. Так же сохрани альтернативы вида "(или ...)".\n' +
+        '- Если шаги относятся к разным частям — сохрани это разделение.\n' +
+        '- Меняй только оформление и орфографию; ингредиенты, количества, шаги и подзаголовки по смыслу не трогай, ничего не выбрасывай.\n' +
+        '- Сохрани существующие строки с картинками ![[...]] на местах, новых не выдумывай.\n\n' +
+        'Пример правильного сохранения подзаголовков:\n' +
+        '**Ингредиенты**\n\n### Тесто\n- [ ] Мука — 120 г\n\n### Крем\n- [ ] Сливки — 350 г\n';
       prompt += '\n\nРЕЦЕПТ ДЛЯ ОФОРМЛЕНИЯ:\n\n"""\n' + src + '\n"""\n\nВерни ТОЛЬКО итоговый рецепт, без пояснений и без тройных кавычек.';
       const reply = await this.callChat([
         { role: 'system', content: this.settings.systemPrompt },
@@ -929,14 +975,10 @@ module.exports = class AINoteEditor extends Plugin {
 
   // Взять один существующий рецепт как образец формата (не сам шаблон)
   async loadExample() {
+    // 1) свой файл-образец, если пользователь его задал; 2) иначе — встроенный образец
     const ex = this.settings.examplePath ? this.app.vault.getAbstractFileByPath(this.settings.examplePath) : null;
     if (ex) { try { return await this.app.vault.read(ex); } catch (e) {} }
-    const folder = this.settings.recipesFolder ? this.settings.recipesFolder.replace(/\/+$/, '') : '';
-    const tplPath = this.settings.templatePath;
-    const files = this.app.vault.getMarkdownFiles()
-      .filter((f) => (f.parent ? f.parent.path : '/') === folder && f.path !== tplPath);
-    if (files.length === 0) return '';
-    try { return await this.app.vault.read(files[0]); } catch (e) { return ''; }
+    return DEFAULT_EXAMPLE;
   }
 
   // Собрать строгий промпт: шаблон + пример заполненного рецепта + задание
@@ -951,7 +993,7 @@ module.exports = class AINoteEditor extends Plugin {
       'Ингредиенты, количества и шаги бери СТРОГО из источника задания (страница/фото/текст), а НЕ из примера. ' +
       'Если в источнике рецепта нет или он нечитаем — ответь ровно «Не удалось извлечь рецепт» и ничего не выдумывай. ' +
       'Обязательно добавь раздел «**Калории**»: выпиши калорийность КАЖДОГО ингредиента отдельной строкой (например «- Мука — 1020 ккал»), затем итог «Всего: N ккал». ' +
-      'Не добавляй строки с картинками ![[...]], если их нет. ' +
+      'КАТЕГОРИЧЕСКИ НЕ добавляй строки с картинками ![[...]] и любые ссылки на .jpg/.png — у нового рецепта фото ещё нет, пользователь добавит его сам. ' +
       'Верни ТОЛЬКО готовый рецепт в этом формате, без пояснений и без тройных кавычек.';
     return p;
   }
@@ -986,9 +1028,17 @@ module.exports = class AINoteEditor extends Plugin {
       }
 
       const title = file.basename || 'Новый рецепт';
-      const tpl = '---\nкатегория: \nтеги: \nвремя_мин: \nпорции: \nоценка: \n---\n\n# ' + title +
+      const tpl = '---\nкатегория: \nвремя_мин: \nпорции: \nоценка: \n---\n\n# ' + title +
         '\n\n**Ингредиенты**\n\n- [ ] \n\n**Приготовление**\n\n1. \n\n**Калории**\n\n';
       await this.app.vault.modify(file, tpl);
+
+      // одна вкладка: если заметку открыли в отдельном листе — сводим в книжную вкладку
+      if (this.isLeafAlive(this.bookLeaf)) {
+        const leaves = this.app.workspace.getLeavesOfType('markdown');
+        for (const l of leaves) {
+          if (l !== this.bookLeaf && l.view && l.view.file === file) { this.consolidateBookTab(l); break; }
+        }
+      }
     } catch (e) {}
   }
 
@@ -1047,6 +1097,17 @@ module.exports = class AINoteEditor extends Plugin {
       reader.readAsArrayBuffer(file);
     };
     input.click();
+  }
+
+  // Все категории: заготовки из настроек + уже встречающиеся в рецептах (без дублей)
+  allCategories() {
+    const predef = (this.settings.categoriesList || '').split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    const found = [];
+    this.app.vault.getMarkdownFiles().forEach((f) => {
+      const fm = (this.app.metadataCache.getFileCache(f) || {}).frontmatter;
+      if (fm && fm['категория']) found.push(String(fm['категория']));
+    });
+    return Array.from(new Set(predef.concat(found)));
   }
 
   parseModels() {
@@ -1124,7 +1185,7 @@ class AISettingTab extends PluginSettingTab {
         t.inputEl.rows = 4; t.inputEl.style.width = '100%'; });
 
     new Setting(containerEl).setName('Vision model')
-      .setDesc('Модель для распознавания фото (Groq: напр. meta-llama/llama-4-scout-17b-16e-instruct).')
+      .setDesc('Модель для распознавания фото (Groq, напр. meta-llama/llama-4-maverick-17b-128e-instruct).')
       .addText((t) => t.setValue(this.plugin.settings.visionModel)
         .onChange(async (v) => { this.plugin.settings.visionModel = v; await this.plugin.saveSettings(); }));
 
@@ -1134,7 +1195,7 @@ class AISettingTab extends PluginSettingTab {
         .onChange(async (v) => { this.plugin.settings.templatePath = v; await this.plugin.saveSettings(); }));
 
     new Setting(containerEl).setName('Путь к образцу (эталон формата)')
-      .setDesc('Готовый рецепт, чей стиль ИИ повторяет. По умолчанию — Блинчики.')
+      .setDesc('Готовый рецепт, чей стиль ИИ повторяет. Если пусто — используется встроенный образец.')
       .addText((t) => t.setValue(this.plugin.settings.examplePath)
         .onChange(async (v) => { this.plugin.settings.examplePath = v; await this.plugin.saveSettings(); }));
 
@@ -1148,12 +1209,6 @@ class AISettingTab extends PluginSettingTab {
       .addTextArea((t) => { t.setValue(this.plugin.settings.categoriesList)
         .onChange(async (v) => { this.plugin.settings.categoriesList = v; await this.plugin.saveSettings(); });
         t.inputEl.rows = 5; t.inputEl.style.width = '100%'; });
-
-    new Setting(containerEl).setName('Теги (по одному на строку)')
-      .setDesc('Заготовки тегов для фильтров и выбора свойств рецепта.')
-      .addTextArea((t) => { t.setValue(this.plugin.settings.tagsList)
-        .onChange(async (v) => { this.plugin.settings.tagsList = v; await this.plugin.saveSettings(); });
-        t.inputEl.rows = 4; t.inputEl.style.width = '100%'; });
 
     new Setting(containerEl).setName('Открывать книгу рецептов при запуске')
       .setDesc('Показывать галерею сразу при открытии Obsidian (удобно на телефоне).')
