@@ -91,12 +91,13 @@ class ChatView extends ItemView {
   }
 
   toggleVoice() {
-    if (this.recognition) { try { this.recognition.stop(); } catch (e) {} return; }
+    if (this.recognition) { this.voiceStopped = true; try { this.recognition.stop(); } catch (e) {} return; }
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { new Notice('Голосовой ввод здесь недоступен — используй микрофон на клавиатуре'); this.inputEl.focus(); return; }
     try {
       const rec = new SR();
       rec.lang = 'ru-RU'; rec.continuous = true; rec.interimResults = false; rec.maxAlternatives = 1;
+      this.voiceStopped = false;
       rec.onresult = (e) => {
         for (let i = e.resultIndex; i < e.results.length; i++) {
           if (e.results[i].isFinal) {
@@ -105,8 +106,16 @@ class ChatView extends ItemView {
           }
         }
       };
-      rec.onerror = (ev) => { if (ev.error !== 'no-speech' && ev.error !== 'aborted') new Notice('Ошибка распознавания: ' + ev.error); };
-      rec.onend = () => { this.recognition = null; if (this.micBtn) { this.micBtn.removeClass('ai-chat-mic-rec'); setIcon(this.micBtn, 'mic'); } };
+      rec.onerror = (ev) => {
+        if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') { this.voiceStopped = true; new Notice('Нет доступа к микрофону'); }
+        else if (ev.error !== 'no-speech' && ev.error !== 'aborted') new Notice('Ошибка распознавания: ' + ev.error);
+      };
+      rec.onend = () => {
+        // движок сам остановился (тишина/таймаут) — продолжаем слушать, пока пользователь не нажмёт стоп
+        if (!this.voiceStopped) { try { rec.start(); return; } catch (e) {} }
+        this.recognition = null;
+        if (this.micBtn) { this.micBtn.removeClass('ai-chat-mic-rec'); setIcon(this.micBtn, 'mic'); }
+      };
       rec.start();
       this.recognition = rec;
       if (this.micBtn) { this.micBtn.addClass('ai-chat-mic-rec'); setIcon(this.micBtn, 'square'); }
@@ -167,7 +176,6 @@ class ChatView extends ItemView {
       const actions = wrap.createDiv('ai-msg-actions');
       actions.createEl('button', { text: 'Создать заметку' }).onclick = () => this.plugin.createRecipeNote(text);
       actions.createEl('button', { text: 'Заменить заметку' }).onclick = () => this.applyToNote(text);
-      actions.createEl('button', { text: 'Вставить в курсор' }).onclick = () => this.insertAtCursor(text);
       actions.createEl('button', { text: 'Копировать' }).onclick = () =>
         navigator.clipboard.writeText(text).then(() => new Notice('Скопировано'));
       actions.createEl('button', { text: 'Переименовать по заголовку' }).onclick = () =>
