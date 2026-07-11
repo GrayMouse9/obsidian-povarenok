@@ -727,8 +727,51 @@ class NewRecipeModal extends Modal {
     this.plugin.allCategories().forEach((c) => sel.createEl('option', { text: c, value: c }));
     sel.onchange = () => { this.cat = sel.value; };
 
-    const btn = contentEl.createEl('button', { cls: 'mod-cta pm-full', text: 'Создать' });
+    const btn = contentEl.createEl('button', { cls: 'mod-cta pm-full', text: '✍️ Создать вручную' });
     btn.onclick = () => { this.close(); this.onCreate({ title: this.rTitle, cat: this.cat }); };
+
+    const aiBtn = contentEl.createEl('button', { cls: 'pm-full', text: '🍳 Создать с Поварёнком' });
+    aiBtn.onclick = () => {
+      this.close();
+      const t = (this.rTitle || '').trim();
+      const prompt = 'Напиши рецепт по шаблону: ' + t + (this.cat ? ' (категория: ' + this.cat + ')' : '');
+      this.plugin.openChatWith(prompt);
+    };
+  }
+  onClose() { this.contentEl.empty(); }
+}
+
+/* ─────────────── Мастер первого запуска ─────────────── */
+class OnboardingModal extends Modal {
+  constructor(app, plugin) { super(app); this.plugin = plugin; }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl('h2', { text: '🍳 Добро пожаловать в Поварёнок!' });
+    contentEl.createEl('p', { text: 'Осталось подключить бесплатный ИИ (Groq) — это разово, около минуты, банковская карта не нужна.' });
+    const ol = contentEl.createEl('ol');
+    ol.createEl('li', { text: 'Нажми кнопку ниже — откроется страница ключей Groq (вход через Google).' });
+    ol.createEl('li', { text: 'Нажми Create API Key и скопируй ключ (начинается с gsk_).' });
+    ol.createEl('li', { text: 'Вставь его в поле и нажми «Сохранить и начать».' });
+
+    const getBtn = contentEl.createEl('button', { cls: 'mod-cta pm-full', text: '🔑 Получить бесплатный ключ Groq' });
+    getBtn.onclick = () => { try { window.open('https://console.groq.com/keys', '_blank'); } catch (e) {} };
+    const urlNote = contentEl.createEl('p', { attr: { style: 'font-size:12px;color:var(--text-muted);margin-top:6px' } });
+    urlNote.setText('Если кнопка не сработала — открой вручную: console.groq.com/keys');
+
+    const input = contentEl.createEl('input', { type: 'text', attr: { placeholder: 'Вставь ключ gsk_...', style: 'width:100%;margin-top:14px' } });
+    const saveBtn = contentEl.createEl('button', { cls: 'mod-cta pm-full', text: 'Сохранить и начать' });
+    saveBtn.onclick = async () => {
+      const k = input.value.trim();
+      if (!k) { new Notice('Сначала вставь ключ'); return; }
+      this.plugin.settings.apiKey = k;
+      await this.plugin.saveSettings();
+      new Notice('Готово! Поварёнок настроен ✅');
+      this.close();
+      this.plugin.activateGallery();
+    };
+
+    const later = contentEl.createEl('button', { cls: 'pm-full', text: 'Позже (настрою в параметрах)' });
+    later.onclick = () => this.close();
   }
   onClose() { this.contentEl.empty(); }
 }
@@ -806,8 +849,11 @@ module.exports = class AINoteEditor extends Plugin {
 
     this.addSettingTab(new AISettingTab(this.app, this));
 
-    // Авто-открытие книги — после регистрации вью
-    this.app.workspace.onLayoutReady(() => { if (this.settings.openBookOnStart) this.activateGallery(); });
+    // Первый запуск без ключа — мастер настройки; иначе авто-открытие книги
+    this.app.workspace.onLayoutReady(() => {
+      if (!this.settings.apiKey) { new OnboardingModal(this.app, this).open(); }
+      else if (this.settings.openBookOnStart) { this.activateGallery(); }
+    });
   }
 
   onunload() {
